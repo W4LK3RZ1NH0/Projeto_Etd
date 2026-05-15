@@ -216,3 +216,8 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+
+#Ignorar CSV grande
+data/raw/bulk/*
+!data/raw/bulk/.gitkeep
