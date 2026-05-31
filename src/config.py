@@ -18,4 +18,4 @@ EXTRA_IMF_FILE    = "data/raw/extra/gdp.csv"
 # Outputs
 OUTPUT_STAGING_FILE   = "data/silver/wdi_staging.csv"
 OUTPUT_CURATED_FILE   = "data/gold/wdi_gold.csv"
-TRANSFORM_LOG_FILE = "transform.log"
+TRANSFORM_LOG_FILE    = "data/logs/transform.log"
