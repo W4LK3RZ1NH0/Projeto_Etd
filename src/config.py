@@ -13,6 +13,7 @@ OUTPUT_API_FILE = "data/raw/api/gdp_all.json"
 WDICSV_FILE       = "data/raw/bulk/WDICSV.csv"
 WDICOUNTRY_FILE   = "data/raw/bulk/WDICountry.csv"
 WDISERIES_FILE    = "data/raw/bulk/WDISeries.csv"
+EXTRA_IMF_FILE    = "data/raw/extra/gdp.csv"
 
 # Outputs
 OUTPUT_STAGING_FILE   = "data/silver/wdi_staging.csv"

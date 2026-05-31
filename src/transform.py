@@ -30,6 +30,25 @@ AGREGADOS_WB = {
     "SAS","SSA","SSF","SST","TEA","TEC","TLA","TMN","TSA","TSS","UMC","WLD",
 }
 
+def carregar_extra_imf(caminho: str) -> pd.DataFrame:
+    logging.info(f"A carregar fonte complementar (IMF/Extra): {caminho}")
+    df = pd.read_csv(caminho, encoding="utf-8")
+    
+    # Renomear para bater certo com as colunas do transform.py
+    df = df.rename(columns={
+        "Country Code": "codigo_pais",
+        "Year":         "ano",
+        "Value":        "valor_imf"
+    })
+    
+    # Garantir a conversão correta de tipos (Data Quality)
+    df["ano"] = pd.to_numeric(df["ano"], errors="coerce").astype("Int64")
+    df["valor_imf"] = pd.to_numeric(df["valor_imf"], errors="coerce")
+    
+    logging.info(f"Fonte complementar carregada: {len(df):,} linhas")
+    
+    # Retornamos apenas as colunas que interessam para o cruzamento
+    return df[["codigo_pais", "ano", "valor_imf"]]
 
 # Ler o WDICSV em chunks (ficheiro grande) e converter de wide para long
 def carregar_bulk(caminho: str) -> pd.DataFrame:
@@ -92,7 +111,7 @@ def carregar_api(caminho: str) -> pd.DataFrame:
 
 
 # Juntar as fontes e enriquecer com metadados de países (camada Silver)
-def construir_silver(df_bulk: pd.DataFrame, df_api: pd.DataFrame) -> pd.DataFrame:
+def construir_silver(df_bulk: pd.DataFrame, df_api: pd.DataFrame, df_extra: pd.DataFrame) -> pd.DataFrame:
     logging.info("A construir camada Silver...")
     df = pd.concat([df_bulk, df_api], ignore_index=True)
     logging.info(f"União bulk + API: {len(df):,} linhas")
@@ -102,6 +121,10 @@ def construir_silver(df_bulk: pd.DataFrame, df_api: pd.DataFrame) -> pd.DataFram
     df = (df.sort_values("fonte", ascending=False)
             .drop_duplicates(subset=["codigo_pais", "codigo_indicador", "ano"]))
     logging.info(f"Desduplicação cross-source: {antes - len(df)} linhas removidas, {len(df):,} restantes")
+
+    #Cruzamento com a 3ª Fonte (Matching Relacional por País e Ano)
+    df = df.merge(df_extra, on=["codigo_pais", "ano"], how="left")
+    logging.info("Integração com a fonte complementar IMF concluída via Left Join.")
 
     # Enriquecer com região e grupo de rendimento do WDICountry
     meta = pd.read_csv(config.WDICOUNTRY_FILE, encoding="utf-8")
@@ -174,16 +197,14 @@ def construir_gold(df: pd.DataFrame) -> pd.DataFrame:
     logging.info(f"Agregados regionais removidos: {antes - len(df)} linhas")
 
     antes = len(df)
-    df = df.dropna(subset=["valor"])
-    logging.info(f"Linhas sem valor removidas: {antes - len(df)}, restam {len(df):,}")
+    df = df.dropna(subset=["valor", "valor_imf"], how="all").copy()
+    logging.info(f"Linhas totalmente sem dados removidas: {antes - len(df)}, restam {len(df):,}")
 
     # Crescimento anual (%) por país e indicador
-    df = df.sort_values(["codigo_pais", "codigo_indicador", "ano"])
     df["crescimento_anual_pct"] = (
-        df.groupby(["codigo_pais", "codigo_indicador"])["valor"]
-          .pct_change() * 100
+    df.groupby(["codigo_pais", "codigo_indicador"])["valor"]
+      .pct_change(fill_method=None) * 100
     ).round(2)
-
     # Década
     df["decada"] = (df["ano"] // 10 * 10).astype("Int64")
 
@@ -198,12 +219,13 @@ if __name__ == "__main__":
     logging.info("INÍCIO DA TRANSFORMAÇÃO")
     logging.info("=" * 60)
 
-    print("1/4  A ler WDICSV e API...")
+    print("1/4  A ler WDICSV, API e o EXTRA...")
     df_bulk = carregar_bulk(config.WDICSV_FILE)
     df_api  = carregar_api(config.OUTPUT_API_FILE)
+    df_extra = carregar_extra_imf(config.EXTRA_IMF_FILE)
 
     print("2/4  A construir camada Silver...")
-    df_silver = construir_silver(df_bulk, df_api)
+    df_silver = construir_silver(df_bulk, df_api, df_extra)
     os.makedirs(os.path.dirname(config.OUTPUT_STAGING_FILE), exist_ok=True)
     df_silver.to_csv(config.OUTPUT_STAGING_FILE, index=False, encoding="utf-8")
     print(f"     {len(df_silver):,} linhas -> {config.OUTPUT_STAGING_FILE}")
