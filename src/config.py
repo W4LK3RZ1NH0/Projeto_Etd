@@ -19,3 +19,6 @@ EXTRA_IMF_FILE    = "data/raw/extra/gdp.csv"
 OUTPUT_STAGING_FILE   = "data/silver/wdi_staging.csv"
 OUTPUT_CURATED_FILE   = "data/gold/wdi_gold.csv"
 TRANSFORM_LOG_FILE    = "data/logs/transform.log"
+
+#Load
+DB_PATH = "sqlite:///data/db/analytics_dw.db"

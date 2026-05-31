@@ -3,6 +3,8 @@ import os, json, logging
 import pandas as pd
 import config
 
+os.makedirs(os.path.dirname(config.TRANSFORM_LOG_FILE), exist_ok=True)
+
 logging.basicConfig(
     filename=config.TRANSFORM_LOG_FILE, level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(message)s", encoding="utf-8"

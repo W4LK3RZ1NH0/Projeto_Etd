@@ -24,11 +24,12 @@ The analysis focuses on macroeconomic and social indicators published by the Wor
 
 Analyzed indicators include:
 
-- Gross Domestic Product (GDP)
-- Inflation
-- Unemployment
-- Economic Growth
-- Complementary Social Indicators
+- Gross Domestic Product (GDP) - current and constant USD
+- GDP per capita and annual growth
+- Inflation (CPI)
+- Unemployment rate
+- Gross capital formation
+- Exports and imports (% of GDP)
 
 ---
 
@@ -54,10 +55,8 @@ Projeto_Etd/
 │       ├── bulk/
 │       │   ├── WDICSV.csv
 │       │   └── WDICountry.csv
-│       │
-|       └── api/
-│           └── gdp_add.json
-|       |
+│       ├── api/
+│       │   └── gdp_all.json
 │       └── extra/
 │           └── gdp.csv
 │
@@ -88,17 +87,17 @@ Projeto_Etd/
 
 ## Data Sources
 
-### 1. World Bank (World Development Indicators)
+### 1. World Bank WDI Bulk Dataset (primary - large volume)
 
-Primary data source used throughout the project.
+Static CSV download from the World Bank Data Catalog. Contains all World Development Indicators across all countries and years. Processed in chunks due to file size.
 
-### 2. World Bank API
+### 2. World Bank Indicators API
 
-Used to retrieve up-to-date information directly from World Bank services.
+Used to retrieve up-to-date GDP data directly from World Bank REST services, paginated via `per_page` parameter.
 
-### 3. Complementary Source
+### 3. IMF Complementary Dataset (gdp.csv)
 
-Additional dataset (`gdp.csv`) used to enrich and validate the primary source.
+Additional GDP series used to cross-validate and enrich the primary source. Joined to the main dataset via `(codigo_pais, ano)` key matching.
 
 ---
 
@@ -108,7 +107,7 @@ Additional dataset (`gdp.csv`) used to enrich and validate the primary source.
 
 Due to file size limitations, raw datasets are not included in the repository.
 
-1. Access the official World Bank Data Catalog.
+1. Access the official [World Bank Data Catalog](https://datacatalog.worldbank.org/search/dataset/0037712).
 2. Download the **CSV File** package from the **World Development Indicators (WDI)** dataset.
 3. Extract the files into:
 
@@ -147,19 +146,15 @@ pip install -r requirements.txt
 
 ## Pipeline Execution
 
-### Phase 1 — Extract
+### Phase 1 - Extract
 
 ```bash
 python src/extract.py
 ```
 
-Output:
+Output: `data/raw/api/gdp_all.json`
 
-```text
-gdp_all.json
-```
-
-### Phase 2 — Transform
+### Phase 2 - Transform
 
 ```bash
 python src/transform.py
@@ -167,72 +162,104 @@ python src/transform.py
 
 Operations:
 
-- Data cleansing.
-- Format standardization.
-- Multi-source integration.
-- Record deduplication.
-- Derived metric generation.
-- Data quality reporting.
+- Data cleansing (nulls, duplicates, type normalization).
+- Multi-source integration (WDI bulk + API + IMF extra).
+- Cross-source deduplication (API takes priority over bulk on conflict).
+- Regional metadata enrichment via `WDICountry.csv`.
+- Derived metric generation (annual growth %, decade column).
+- Removal of World Bank regional aggregates (non-sovereign codes).
+- Data quality reporting to log.
 
 Outputs:
 
 ```text
-data/processed/silver/wdi_staging.csv
-data/curated/gold/wdi_gold.csv
+data/silver/wdi_staging.csv   ← Silver layer (cleaned, integrated)
+data/gold/wdi_gold.csv        ← Gold layer (analysis-ready)
+data/logs/*.log       ← Quality reports
 ```
 
-Report:
-
-```text
-data/logs/transform.log
-```
-
-### Phase 3 — Load
+### Phase 3 - Load
 
 ```bash
 python src/load.py
 ```
 
-Output:
-
-```text
-data/db/analytics_dw.db
-```
+Output: `data/db/analytics_dw.db`
 
 ---
 
 ## Dimensional Model
 
-The Data Warehouse follows a **Star Schema** approach, enabling analysis by:
+The Data Warehouse follows a **Star Schema**, chosen for the following reasons:
 
-- Country
-- Indicator
-- Year
-- Region
-- Income Group
+- Analytical queries (aggregations by country, region, year, income group) are the primary workload - star schemas are optimised for this pattern.
+- Denormalized dimensions reduce join complexity for dashboard queries.
+- Clear separation between descriptive attributes (dimensions) and measurable facts (fact table) improves readability and maintainability.
+
+### Entity-Relationship Diagram
+
+<p align="center">
+  <img src="./assets/ER_Diagram.png" alt="ER Diagram" width="900">
+</p>
+
+### Relational Schema
+
+<p align="center">
+  <img src="./assets/Rel_Schema.png" alt="Relational Schema" width="900">
+</p>
+
+### Storage Engine: SQLite
+
+SQLite was chosen because:
+
+- No external dependencies - runs on any machine without server setup (required by the project).
+- Sufficient performance for this dataset size (~hundreds of thousands of rows).
+- Full SQLAlchemy compatibility, making migration to PostgreSQL straightforward (change one connection string).
+
+**Known limitation:** SQLite does not enforce foreign key constraints by default. Referential integrity is instead validated programmatically in `load.py` via LEFT JOIN checks, and documented in `load.log`.
+
+### Indexes
+
+The following indexes are created automatically by `load.py` to optimize dashboard queries:
+
+| Index | Table | Column(s) | Purpose |
+|---|---|---|---|
+| `idx_fact_pais` | fact_indicadores_macro | `codigo_pais` | Filter/join by country |
+| `idx_fact_indicador` | fact_indicadores_macro | `codigo_indicador` | Filter/join by indicator |
+| `idx_fact_ano` | fact_indicadores_macro | `ano` | Time-series filtering |
+| `idx_fact_decada` | fact_indicadores_macro | `decada` | Decade aggregations |
+| `idx_fact_pk` | fact_indicadores_macro | `(codigo_pais, codigo_indicador, ano)` | Composite key for deduplication |
+
+### Incremental Load Strategy
+
+Dimension tables (`dim_paises`, `dim_indicadores`) use a **full refresh** strategy - they are small and replaced entirely on each run to reflect any upstream changes.
+
+The fact table (`fact_indicadores_macro`) uses an **incremental append** strategy - on re-runs, only records with a new `(codigo_pais, codigo_indicador, ano)` key are inserted, preventing duplicates while preserving existing data.
 
 ---
 
 ## Data Quality Controls
 
-The pipeline includes validation mechanisms for:
+The pipeline includes validation mechanisms across all phases:
 
-- Missing values
-- Duplicate records
-- Referential integrity
-- Chronological consistency
-- Cross-source compatibility
-
-Validation results are recorded in the project's log files.
+| Check | Phase | Location |
+|---|---|---|
+| Missing values per indicator | Transform | `transform.log` |
+| Duplicate records (cross-source) | Transform | `transform.log` |
+| Regional aggregate removal | Transform | `transform.log` |
+| Row count match (Gold vs DB) | Load | `load.log` |
+| Chronological range (1960–2026) | Load | `load.log` |
+| Referential integrity (orphan FKs) | Load | `load.log` |
 
 ---
 
 ## Generated Outputs
 
 | Layer | File | Description |
-|---------|---------|------------|
-| Raw | gdp_all.json | Data extracted from the API |
-| Silver | wdi_staging.csv | Cleaned and integrated dataset |
-| Gold | wdi_gold.csv | Analysis-ready dataset |
-| DW | analytics_dw.db | Analytical Data Warehouse |
-| Logs | transform.log | Data quality report |
+|---|---|---|
+| Raw | `gdp_all.json` | Data extracted from the World Bank API |
+| Silver | `wdi_staging.csv` | Cleaned and integrated dataset |
+| Gold | `wdi_gold.csv` | Analysis-ready dataset |
+| DW | `analytics_dw.db` | Analytical Data Warehouse (SQLite) |
+| Logs | `transform.log` | Data quality report (transform phase) |
+| Logs | `load.log` | Load and integrity validation report |
