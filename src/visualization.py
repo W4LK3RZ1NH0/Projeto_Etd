@@ -1,3 +1,4 @@
+# streamlit run src/visualization.py
 import os
 import sys
 import sqlite3
