@@ -14,6 +14,23 @@ logging.basicConfig(
     format="%(asctime)s - %(levelname)s - %(message)s", encoding="utf-8"
 )
 
+def _inicializar_esquema(engine):
+    """Garante que o banco de dados segue estritamente o desenho definido no sql/schema.sql"""
+    caminho_schema = "sql/schema.sql"
+    if not os.path.exists(caminho_schema):
+        logging.error(f"Ficheiro de esquema não encontrado em: {caminho_schema}")
+        return
+
+    print("A inicializar a estrutura do banco através do schema.sql...")
+    with open(caminho_schema, "r", encoding="utf-8") as f:
+        statements = f.read().split(";")
+        
+    with engine.connect() as conn:
+        for statement in statements:
+            if statement.strip():
+                conn.execute(text(statement))
+        conn.commit()
+    logging.info("Estrutura do DDL/Schema aplicada com sucesso.")
 
 def _criar_indices(engine):
     """Cria índices para otimizar queries analíticas do dashboard."""
@@ -41,6 +58,8 @@ def carregar_camada_platinum():
 
     engine = create_engine(config.DB_PATH)
 
+    _inicializar_esquema(engine)
+
     # Ler os dados finais validados na camada Gold
     caminho_gold = config.OUTPUT_CURATED_FILE
     if not os.path.exists(caminho_gold):
@@ -55,14 +74,24 @@ def carregar_camada_platinum():
     # POPULAR PAISES
     print("1/3 A estruturar e carregar 'dim_paises'...")
     df_paises = df_gold[["codigo_pais", "nome_pais", "regiao", "grupo_rendimento"]].drop_duplicates("codigo_pais")
-    df_paises.to_sql("dim_paises", con=engine, if_exists="replace", index=False)
-    logging.info(f"Dimensão 'dim_paises' carregada: {len(df_paises)} países únicos.")
+    try:
+        paises_existentes = pd.read_sql("SELECT codigo_pais FROM dim_paises", con=engine)
+        df_paises = df_paises[~df_paises["codigo_pais"].isin(paises_existentes["codigo_pais"])]
+    except Exception:
+        pass
+    df_paises.to_sql("dim_paises", con=engine, if_exists="append", index=False)
+    logging.info("Dimensão 'dim_paises' atualizada.")
 
     # POPULAR INDICADORES
     print("2/3 A estruturar e carregar 'dim_indicadores'...")
     df_indicadores = df_gold[["codigo_indicador", "nome_indicador"]].drop_duplicates("codigo_indicador")
-    df_indicadores.to_sql("dim_indicadores", con=engine, if_exists="replace", index=False)
-    logging.info(f"Dimensão 'dim_indicadores' carregada: {len(df_indicadores)} indicadores únicos.")
+    try:
+        ind_existentes = pd.read_sql("SELECT codigo_indicador FROM dim_indicadores", con=engine)
+        df_indicadores = df_indicadores[~df_indicadores["codigo_indicador"].isin(ind_existentes["codigo_indicador"])]
+    except Exception:
+        pass
+    df_indicadores.to_sql("dim_indicadores", con=engine, if_exists="append", index=False)
+    logging.info("Dimensão 'dim_indicadores' atualizada.")
 
     # POPULAR TABELA DE FACTOS    
     print("3/3 A carregar tabela de factos 'fact_indicadores_macro'...")
@@ -81,20 +110,17 @@ def carregar_camada_platinum():
             how="left", indicator=True
         )
         df_novos = df_novos[df_novos["_merge"] == "left_only"].drop(columns=["_merge"])
-
-        if df_novos.empty:
-            print("  [INFO] Sem novos registos para inserir (base já atualizada).")
-            logging.info("Carga incremental: 0 novos registos - base já estava atualizada.")
-        else:
-            df_novos.to_sql("fact_indicadores_macro", con=engine, if_exists="append", index=False)
-            logging.info(f"Carga incremental: {len(df_novos):,} novos registos inseridos.")
-            print(f"  [OK] {len(df_novos):,} novos registos inseridos (incremental).")
-
     except Exception:
-        # Primeira execução - tabela ainda não existe
-        df_fact.to_sql("fact_indicadores_macro", con=engine, if_exists="replace", index=False)
-        logging.info(f"Carga inicial: {len(df_fact):,} registos inseridos.")
-        print(f"  [OK] Carga inicial: {len(df_fact):,} registos.")
+        df_novos = df_fact
+
+    if df_novos.empty:
+        print("  [INFO] Sem novos registos para inserir (base já atualizada).")
+        logging.info("Carga incremental: 0 novos registos.")
+    else:
+        # Usamos append para que o SQLite preencha o id_fact autoincremental sozinho
+        df_novos.to_sql("fact_indicadores_macro", con=engine, if_exists="append", index=False)
+        logging.info(f"Carga incremental: {len(df_novos):,} novos registos inseridos.")
+        print(f"  [OK] {len(df_novos):,} novos registos inseridos.")
 
     # Criar índices após carga
     print("\nA criar índices de performance...")
