@@ -4,14 +4,11 @@ from sqlalchemy import create_engine
 import config
 
 def _get_engine():
-    """Retorna o motor de conexão à base de dados."""
+
     return create_engine(config.DB_PATH)
 
 def obter_visao_geral_paises():
-    """
-    Retorna a lista de países com as respetivas regiões e grupos de rendimento.
-    Útil para o teu colega preencher as caixas de seleção (sidebars/filtros) no Streamlit.
-    """
+
     engine = _get_engine()
     query = """
         SELECT codigo_pais, nome_pais, regiao, grupo_rendimento 
@@ -21,10 +18,6 @@ def obter_visao_geral_paises():
     return pd.read_sql(query, con=engine)
 
 def obter_evolucao_temporal(codigo_pais, codigos_indicadores):
-    """
-    Responde à Pergunta 1 e 3 do guião: Evolução e cruzamento de indicadores ao longo do tempo.
-    Retorna uma tabela pivotada pronta para gráficos de linhas.
-    """
     engine = _get_engine()
     
     # Permitir passar um único indicador ou uma lista
@@ -50,10 +43,6 @@ def obter_evolucao_temporal(codigo_pais, codigos_indicadores):
     return pd.read_sql(query, con=engine)
 
 def comparar_grupos_rendimento(codigo_indicador, ano):
-    """
-    Responde à Pergunta 2 do guião: Diferenças persistentes entre países de rendimento Alto, Médio e Baixo.
-    Calcula a média do indicador para cada grupo de rendimento num determinado ano.
-    """
     engine = _get_engine()
     query = f"""
         SELECT 
@@ -71,11 +60,6 @@ def comparar_grupos_rendimento(codigo_indicador, ano):
     return pd.read_sql(query, con=engine)
 
 def analisar_correlacao_investimento_crescimento(codigo_pais):
-    """
-    Cruza a Formação Bruta de Capital (% do PIB) com o Crescimento do PIB (% anual) 
-    para testar a hipótese de que maior investimento gera maior crescimento futuro.
-    Ideal para um gráfico de dispersão (Scatter Plot) ou linhas duplas.
-    """
     engine = _get_engine()
     query = f"""
         SELECT 
@@ -92,10 +76,6 @@ def analisar_correlacao_investimento_crescimento(codigo_pais):
     return pd.read_sql(query, con=engine)
 
 def ranking_paises_por_indicador(codigo_indicador, ano, limite=10):
-    """
-    Retorna o Top X de países para um determinado indicador e ano (ex: maiores PIBs ou maiores taxas de Desemprego).
-    Ideal para gráficos de barras no Streamlit.
-    """
     engine = _get_engine()
     query = f"""
         SELECT 
